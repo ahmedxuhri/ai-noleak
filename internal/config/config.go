@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -26,8 +27,10 @@ type Config struct {
 	MasterKeyMode string `yaml:"master_key_mode,omitempty"`
 
 	// Proxy
-	ProxyListen   string `yaml:"proxy_listen,omitempty"`   // default 127.0.0.1:9999
-	ProxyUpstream string `yaml:"proxy_upstream,omitempty"` // required for proxy use; e.g. https://api.anthropic.com or https://proxy.example
+	ProxyListen            string   `yaml:"proxy_listen,omitempty"`             // default 127.0.0.1:9999
+	ProxyUpstream          string   `yaml:"proxy_upstream,omitempty"`           // required for proxy use; e.g. https://api.anthropic.com or https://proxy.example
+	ProxyPreserveHeaders   []string `yaml:"proxy_preserve_headers,omitempty"`   // end-to-end headers to preserve explicitly
+	ProxyPassthroughTokens []string `yaml:"proxy_passthrough_tokens,omitempty"` // exact body tokens exempt from redaction
 
 	// Detector
 	AutoRegisterMinConf float64 `yaml:"auto_register_min_conf,omitempty"`
@@ -50,11 +53,20 @@ type WatchRule struct {
 // from $HOME at call time; everything else is hardcoded.
 func Defaults(home string) Config {
 	return Config{
-		SocketPath:          filepath.Join(home, ".noleak", "sock"),
-		VaultPath:           filepath.Join(home, ".noleak", "vault.bin"),
-		MasterKeyMode:       "passphrase",
-		ProxyListen:         "127.0.0.1:9999",
-		ProxyUpstream:       "", // user must set this if they want the proxy
+		SocketPath:    filepath.Join(home, ".noleak", "sock"),
+		VaultPath:     filepath.Join(home, ".noleak", "vault.bin"),
+		MasterKeyMode: "passphrase",
+		ProxyListen:   "127.0.0.1:9999",
+		ProxyUpstream: "", // user must set this if they want the proxy
+		ProxyPreserveHeaders: []string{
+			"Authorization",
+			"X-Api-Key",
+			"Anthropic-Version",
+			"Anthropic-Beta",
+			"User-Agent",
+			"Accept",
+			"Content-Type",
+		},
 		AutoRegisterMinConf: 0.85,
 	}
 }
@@ -111,6 +123,9 @@ func merge(def, c Config) Config {
 	if c.ProxyListen == "" {
 		c.ProxyListen = def.ProxyListen
 	}
+	if c.ProxyPreserveHeaders == nil {
+		c.ProxyPreserveHeaders = append([]string(nil), def.ProxyPreserveHeaders...)
+	}
 	if c.AutoRegisterMinConf == 0 {
 		c.AutoRegisterMinConf = def.AutoRegisterMinConf
 	}
@@ -130,5 +145,28 @@ func Validate(c Config) error {
 			return fmt.Errorf("config: watch[%q].action must be purge|redact, got %q", w.Path, w.Action)
 		}
 	}
+	for _, h := range c.ProxyPreserveHeaders {
+		if !validHeaderName(h) {
+			return fmt.Errorf("config: invalid proxy_preserve_headers entry %q", h)
+		}
+	}
+	for _, tok := range c.ProxyPassthroughTokens {
+		if strings.TrimSpace(tok) == "" {
+			return fmt.Errorf("config: proxy_passthrough_tokens cannot contain empty values")
+		}
+	}
 	return nil
+}
+
+func validHeaderName(h string) bool {
+	h = strings.TrimSpace(h)
+	if h == "" {
+		return false
+	}
+	for _, r := range h {
+		if r <= 32 || r >= 127 || strings.ContainsRune("()<>@,;:\\\"/[]?={}", r) {
+			return false
+		}
+	}
+	return true
 }

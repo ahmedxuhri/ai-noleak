@@ -90,6 +90,90 @@ func TestProxy_RequestBodyRedacted(t *testing.T) {
 	}
 }
 
+func TestProxy_PreservesConfiguredAuthHeaders(t *testing.T) {
+	srv, _, rec := newProxyForTest(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	})
+	srv.cfg.PreserveHeaders = []string{"authorization", "x-upstream-auth"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.Serve(ctx)
+	time.Sleep(20 * time.Millisecond)
+
+	req, err := http.NewRequest("POST", "http://"+srv.Addr()+"/v1/messages", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer proxy-auth-token")
+	req.Header.Set("X-Upstream-Auth", "proxy-auth-token")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if got := rec.headers[0].Get("Authorization"); got != "Bearer proxy-auth-token" {
+		t.Fatalf("Authorization was not preserved, got %q", got)
+	}
+	if got := rec.headers[0].Get("X-Upstream-Auth"); got != "proxy-auth-token" {
+		t.Fatalf("X-Upstream-Auth was not preserved, got %q", got)
+	}
+}
+
+func TestProxy_PassthroughTokenExemptFromRedaction(t *testing.T) {
+	secret := "sk_" + "live_" + "4eC39HqLyjWDarjtT1zdp7dc"
+	var captured string
+	var mu sync.Mutex
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		captured = string(body)
+		mu.Unlock()
+		w.WriteHeader(200)
+	}))
+	defer upstream.Close()
+
+	master, _ := vault.NewMasterSecret()
+	srv, err := New(Config{
+		ListenAddr:        "127.0.0.1:0",
+		Upstream:          upstream.URL,
+		Vault:             vault.NewMemory(),
+		Detector:          detect.New(detect.Options{}),
+		MasterSecret:      master,
+		PassthroughTokens: []string{secret},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.Listen(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.Serve(ctx)
+	time.Sleep(20 * time.Millisecond)
+
+	body := `{"upstream_proxy_token":"` + secret + `"}`
+	resp, err := http.Post("http://"+srv.Addr()+"/v1/messages", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(captured, secret) {
+		t.Fatalf("passthrough token was redacted or dropped: %s", captured)
+	}
+	if strings.Contains(captured, "@TOKEN_") {
+		t.Fatalf("passthrough token should not be replaced with placeholder: %s", captured)
+	}
+}
+
 func TestProxy_ResponseBodyRedacted(t *testing.T) {
 	srv, _, _ := newProxyForTest(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
@@ -110,6 +194,73 @@ func TestProxy_ResponseBodyRedacted(t *testing.T) {
 	respBytes, _ := io.ReadAll(resp.Body)
 	if bytes.Contains(respBytes, []byte("AKIAIOSFODNN7EXAMPLE")) {
 		t.Fatalf("client received plaintext secret in response: %s", respBytes)
+	}
+}
+
+func TestProxy_RequestLogFailureIncludesRedactedSnippet(t *testing.T) {
+	responseSecret := "sk_" + "live_" + "4eC39HqLyjWDarjtT1zdp7dc"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"bad token ` + responseSecret + `"}`))
+	}))
+	defer upstream.Close()
+
+	var events []RequestEvent
+	var mu sync.Mutex
+	master, _ := vault.NewMasterSecret()
+	srv, err := New(Config{
+		ListenAddr:   "127.0.0.1:0",
+		Upstream:     upstream.URL,
+		Vault:        vault.NewMemory(),
+		Detector:     detect.New(detect.Options{}),
+		MasterSecret: master,
+		RequestLog: func(ev RequestEvent) {
+			mu.Lock()
+			defer mu.Unlock()
+			events = append(events, ev)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.Listen(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.Serve(ctx)
+	time.Sleep(20 * time.Millisecond)
+
+	resp, err := http.Post("http://"+srv.Addr()+"/v1/messages", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected upstream status to pass through, got %d", resp.StatusCode)
+	}
+	if bytes.Contains(body, []byte(responseSecret)) {
+		t.Fatalf("client received raw secret in failure body: %s", body)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(events) != 1 {
+		t.Fatalf("expected one request log event, got %d", len(events))
+	}
+	if events[0].Status != http.StatusUnauthorized {
+		t.Fatalf("expected 401 event, got %+v", events[0])
+	}
+	if events[0].ErrorSnippet == "" {
+		t.Fatalf("expected non-empty failure snippet")
+	}
+	if strings.Contains(events[0].ErrorSnippet, responseSecret) {
+		t.Fatalf("failure snippet leaked raw secret: %q", events[0].ErrorSnippet)
+	}
+	if !strings.Contains(events[0].ErrorSnippet, "@TOKEN_") {
+		t.Fatalf("expected redacted placeholder in failure snippet, got %q", events[0].ErrorSnippet)
 	}
 }
 

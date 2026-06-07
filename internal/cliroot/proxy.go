@@ -67,6 +67,8 @@ func runProxy() error {
 	srv, err := proxy.New(proxy.Config{
 		ListenAddr:          cfg.ProxyListen,
 		Upstream:            cfg.ProxyUpstream,
+		PreserveHeaders:     cfg.ProxyPreserveHeaders,
+		PassthroughTokens:   cfg.ProxyPassthroughTokens,
 		Vault:               &daemonProxyVault{client: client},
 		Detector:            detect.New(detect.Options{}),
 		MasterSecret:        master,
@@ -76,6 +78,11 @@ func runProxy() error {
 				ev.When.Format("15:04:05"), ev.Direction, ev.Path, ev.Placeholder, ev.Kind, ev.Confidence)
 		},
 		RequestLog: func(ev proxy.RequestEvent) {
+			if ev.ErrorSnippet != "" {
+				fmt.Fprintf(os.Stderr, "[noleak proxy] %s %s %s -> %s [%d] %s\n",
+					ev.When.Format("15:04:05"), ev.Method, ev.Path, ev.UpstreamPath, ev.Status, ev.ErrorSnippet)
+				return
+			}
 			fmt.Fprintf(os.Stderr, "[noleak proxy] %s %s %s -> %s [%d]\n",
 				ev.When.Format("15:04:05"), ev.Method, ev.Path, ev.UpstreamPath, ev.Status)
 		},

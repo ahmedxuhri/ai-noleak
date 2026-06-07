@@ -13,6 +13,24 @@ make build
 make test
 ```
 
+## Proxy Configuration
+
+`noleak proxy` reads `~/.noleak/config.yaml`.
+
+```yaml
+proxy_listen: 127.0.0.1:9999
+proxy_upstream: https://proxy.example/v1
+proxy_preserve_headers:
+  - Authorization
+  - X-Api-Key
+  - Anthropic-Version
+  - Anthropic-Beta
+proxy_passthrough_tokens:
+  - exact-upstream-proxy-token-that-may-appear-in-request-bodies
+```
+
+`proxy_passthrough_tokens` is for upstream-proxy authentication material that is intentionally allowed to reach that upstream. Do not put provider keys, wallet material, bot tokens, or user account secrets there.
+
 ## Status
 
 Working v0 prototype. The Go test suite is green locally. Deployment tooling, release CI, and full VPS install docs are future work.

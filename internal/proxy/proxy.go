@@ -47,6 +47,14 @@ type Config struct {
 	// Upstream is the absolute URL of the real API target, e.g.
 	// "https://proxy.example" or "https://api.anthropic.com".
 	Upstream string
+	// PreserveHeaders names end-to-end headers that should be explicitly
+	// copied from client to upstream. Hop-by-hop and body-framing headers are
+	// still refused even if listed.
+	PreserveHeaders []string
+	// PassthroughTokens are exact body substrings that are exempt from
+	// redaction. This is intended for upstream-proxy auth tokens that are
+	// safe by design for that upstream, not for user/provider secrets.
+	PassthroughTokens []string
 	// Vault and Detector are shared with the daemon's IPC server.
 	Vault        vault.Vault
 	Detector     *detect.Detector
@@ -88,12 +96,14 @@ type RequestEvent struct {
 	Path         string
 	UpstreamPath string
 	Status       int
+	ErrorSnippet string
 }
 
 // Server is the proxy. Construct with New, run with Listen+Serve.
 type Server struct {
 	cfg     Config
 	upstrm  *url.URL
+	pass    map[string]struct{}
 	httpSrv *http.Server
 	mu      sync.Mutex
 	ln      net.Listener
@@ -125,7 +135,13 @@ func New(cfg Config) (*Server, error) {
 		// Hard refusal — the proxy is local-trust by design. SPEC §2 trust zones.
 		return nil, fmt.Errorf("proxy: ListenAddr %q must bind loopback only", cfg.ListenAddr)
 	}
-	return &Server{cfg: cfg, upstrm: u}, nil
+	pass := make(map[string]struct{}, len(cfg.PassthroughTokens))
+	for _, tok := range cfg.PassthroughTokens {
+		if tok != "" {
+			pass[tok] = struct{}{}
+		}
+	}
+	return &Server{cfg: cfg, upstrm: u, pass: pass}, nil
 }
 
 // Listen begins accepting connections. The returned listener is also stored
@@ -247,7 +263,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "proxy: build upstream request: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	copyHeaders(upstreamReq.Header, r.Header)
+	copyHeaders(upstreamReq.Header, r.Header, s.cfg.PreserveHeaders)
 	upstreamReq.Header.Set("Host", s.upstrm.Host)
 	upstreamReq.Host = s.upstrm.Host
 	if clientEncoding != "" && clientEncoding != "identity" {
@@ -263,28 +279,20 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	if s.cfg.RequestLog != nil {
-		s.cfg.RequestLog(RequestEvent{
-			When:   time.Now(),
-			Method: r.Method, Path: r.URL.Path, UpstreamPath: out.Path,
-			Status: resp.StatusCode,
-		})
-	}
-
 	// Decide streaming vs buffered based on content type.
 	ct := resp.Header.Get("Content-Type")
 	isStream := strings.Contains(ct, "text/event-stream") || strings.Contains(resp.Header.Get("Transfer-Encoding"), "chunked")
 
-	copyHeaders(w.Header(), resp.Header)
-	w.WriteHeader(resp.StatusCode)
-
 	if isStream {
+		s.logRequest(r.Method, r.URL.Path, out.Path, resp.StatusCode, "")
+		copyHeaders(w.Header(), resp.Header, nil)
+		w.WriteHeader(resp.StatusCode)
 		s.streamResponse(w, resp.Body, r.URL.Path, r.Method)
 		return
 	}
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	if err != nil {
-		// Client already got headers; best we can do is stop writing.
+		http.Error(w, "proxy: read response body: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	// Decode the response body if upstream sent it encoded, redact, then
@@ -293,12 +301,28 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	respEncoding := resp.Header.Get("Content-Encoding")
 	decoded, err := decodeBody(respBody, respEncoding)
 	if err != nil {
-		// Don't risk forwarding undecodable bytes — return early. Headers
-		// are already written so the connection just closes here.
+		http.Error(w, "proxy: decode response: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	redacted := s.scanAndRedact(decoded, "response", r.URL.Path, r.Method)
+	s.logRequest(r.Method, r.URL.Path, out.Path, resp.StatusCode, failureSnippet(redacted, resp.StatusCode))
+	copyHeaders(w.Header(), resp.Header, nil)
+	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(redacted)
+}
+
+func (s *Server) logRequest(method, path, upstreamPath string, status int, snippet string) {
+	if s.cfg.RequestLog == nil {
+		return
+	}
+	s.cfg.RequestLog(RequestEvent{
+		When:         time.Now(),
+		Method:       method,
+		Path:         path,
+		UpstreamPath: upstreamPath,
+		Status:       status,
+		ErrorSnippet: snippet,
+	})
 }
 
 // streamResponse line-buffers chunks from the upstream, scans each line, and
@@ -341,6 +365,9 @@ func (s *Server) scanAndRedact(payload []byte, direction, path, method string) [
 	spans := make([]span, 0, len(matches))
 	for _, m := range matches {
 		val := string(payload[m.Start:m.End])
+		if s.isPassthroughToken(val) {
+			continue
+		}
 		var ph string
 		switch {
 		case m.Source == "ac":
@@ -370,6 +397,14 @@ func (s *Server) scanAndRedact(payload []byte, direction, path, method string) [
 		return payload
 	}
 	return rewrite(payload, spans)
+}
+
+func (s *Server) isPassthroughToken(val string) bool {
+	if len(s.pass) == 0 {
+		return false
+	}
+	_, ok := s.pass[val]
+	return ok
 }
 
 func rewrite(input []byte, spans []span) []byte {
@@ -433,18 +468,47 @@ func values(v vault.Vault) []string {
 // handle() decodes, redacts, and re-encodes inside the same encoding —
 // then sets Content-Encoding back on the outgoing request explicitly. For
 // un-encoded bodies the header is absent on both sides.
-func copyHeaders(dst, src http.Header) {
+func copyHeaders(dst, src http.Header, preserve []string) {
 	for k, vs := range src {
-		switch strings.ToLower(k) {
-		case "connection", "proxy-connection", "keep-alive", "te", "trailer",
-			"transfer-encoding", "upgrade", "proxy-authenticate", "proxy-authorization",
-			"content-length", "content-encoding":
+		if skipHeader(k) {
 			continue
 		}
 		for _, v := range vs {
 			dst.Add(k, v)
 		}
 	}
+	for _, h := range preserve {
+		if skipHeader(h) {
+			continue
+		}
+		if vals := src.Values(h); len(vals) > 0 {
+			dst.Del(h)
+			for _, v := range vals {
+				dst.Add(h, v)
+			}
+		}
+	}
+}
+
+func skipHeader(k string) bool {
+	switch strings.ToLower(strings.TrimSpace(k)) {
+	case "connection", "proxy-connection", "keep-alive", "te", "trailer",
+		"transfer-encoding", "upgrade", "proxy-authenticate", "proxy-authorization",
+		"content-length", "content-encoding":
+		return true
+	}
+	return false
+}
+
+func failureSnippet(body []byte, status int) string {
+	if status < 400 || len(body) == 0 {
+		return ""
+	}
+	s := strings.Join(strings.Fields(string(body)), " ")
+	if len(s) > 240 {
+		s = s[:240] + "..."
+	}
+	return s
 }
 
 // decodeBody returns the plaintext form of body given the (possibly empty)

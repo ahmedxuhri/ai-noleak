@@ -73,6 +73,7 @@ These are sometimes confused for "future work" but are actually either done, def
 |---|---|
 | SQLCipher backend | Decided against. AES-GCM blob is sufficient at this scale and avoids CGO. |
 | gzip request/response handling | **DONE** (was originally deferred). Decode-redact-recompress round-trip is implemented and tested. See `internal/proxy/proxy.go` `decodeBody`/`encodeBody` and `gzip_test.go`. |
+| Upstream proxy auth hardening | **DONE**. `proxy_preserve_headers` explicitly preserves end-to-end auth/version headers, `proxy_passthrough_tokens` exempts intentional upstream-proxy tokens from body redaction, and non-2xx request logs include a redacted response snippet. |
 | Multi-agent gRPC fan-out | Tracked separately as task #14, deferred until the first concrete multi-agent deployment. |
 | 3s Esc-to-undo on paste | v1 polish; v0 substitutes immediately because L2 is the load-bearing defense. |
 | Web dashboard | Spec §12 explicitly excludes it. |
