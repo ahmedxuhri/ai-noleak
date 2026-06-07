@@ -4,12 +4,11 @@ Local secret-leak prevention for agentic AI CLIs running through untrusted upstr
 
 `ai-noleak` is a Go prototype for a local vault, detector, PTY wrapper, hook layer, watcher, and HTTP proxy that replaces credential-like values with deterministic local placeholders before traffic leaves the machine.
 
-See [SPEC.md](SPEC.md) for the architecture and [build/FUTURE_WORK.md](build/FUTURE_WORK.md) for current limitations and next work.
+See [SPEC.md](SPEC.md) for the architecture and [FUTURE_WORK.md](FUTURE_WORK.md) for current limitations and next work.
 
 ## Build
 
 ```sh
-cd build
 make build
 make test
 ```
