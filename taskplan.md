@@ -1,6 +1,6 @@
 # Task Plan
 
-## 1. Add `noleak doctor`
+## 1. Add `noleak doctor` — done
 
 Build an operator confidence command that verifies the local installation is actually protecting traffic:
 
@@ -14,7 +14,7 @@ Build an operator confidence command that verifies the local installation is act
 - agent hook/config hints where detectable
 - clear pass/warn/fail output
 
-## 2. Add CI
+## 2. Add CI — done
 
 Add GitHub Actions coverage for:
 
@@ -23,7 +23,7 @@ Add GitHub Actions coverage for:
 - `gitleaks detect`
 - build checks for Linux amd64 and arm64
 
-## 3. Write Manual VPS Install Docs
+## 3. Write Manual VPS Install Docs — done
 
 Create copy-pasteable docs for a manual VPS install:
 
@@ -35,7 +35,7 @@ Create copy-pasteable docs for a manual VPS install:
 - verify noleak is on the request path
 - troubleshoot common failures
 
-## 4. Add Dogfood Transcript
+## 4. Add Dogfood Transcript — done
 
 Document one real local test flow using synthetic secrets only:
 
@@ -45,7 +45,7 @@ Document one real local test flow using synthetic secrets only:
 - expected upstream-safe placeholder behavior
 - what a bypass/misconfiguration looks like
 
-## 5. Add Install Script / Release Prep
+## 5. Add Install Script / Release Prep — initial version done
 
 After the manual path is proven, add deployment packaging:
 

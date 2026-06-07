@@ -53,7 +53,8 @@ type ScanRequest struct {
 
 // Match mirrors detect.Match on the wire.
 type Match struct {
-	Start, End  int     `json:"start"`
+	Start       int     `json:"start"`
+	End         int     `json:"end"`
 	Kind        string  `json:"kind"`
 	Source      string  `json:"source"`
 	Confidence  float64 `json:"confidence"`

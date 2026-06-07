@@ -27,6 +27,7 @@ func Execute() error {
 		newReviewCmd(),
 		newUnlockCmd(),
 		newStatusCmd(),
+		newDoctorCmd(),
 		newRotateCmd(),
 		newRotateListCmd(),
 		newDeleteCmd(),
