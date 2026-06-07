@@ -45,7 +45,7 @@ type Config struct {
 	// ListenAddr is the loopback bind address, e.g. "127.0.0.1:9999".
 	ListenAddr string
 	// Upstream is the absolute URL of the real API target, e.g.
-	// "https://apistore.space" or "https://api.anthropic.com".
+	// "https://proxy.example" or "https://api.anthropic.com".
 	Upstream string
 	// Vault and Detector are shared with the daemon's IPC server.
 	Vault        vault.Vault

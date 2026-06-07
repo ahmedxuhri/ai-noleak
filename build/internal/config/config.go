@@ -27,7 +27,7 @@ type Config struct {
 
 	// Proxy
 	ProxyListen   string `yaml:"proxy_listen,omitempty"`   // default 127.0.0.1:9999
-	ProxyUpstream string `yaml:"proxy_upstream,omitempty"` // required for proxy use; e.g. https://api.anthropic.com or https://apistore.space
+	ProxyUpstream string `yaml:"proxy_upstream,omitempty"` // required for proxy use; e.g. https://api.anthropic.com or https://proxy.example
 
 	// Detector
 	AutoRegisterMinConf float64 `yaml:"auto_register_min_conf,omitempty"`

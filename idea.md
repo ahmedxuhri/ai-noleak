@@ -9,7 +9,7 @@
 
 ## 🎯 Active Challenge
 
-**"Design a practical system for using powerful agentic AI CLI tools on a VPS in YOLO mode while minimizing leakage risk of crypto wallet tokens, Telegram bot secrets, private keys, and similar high-impact credentials — even when traffic may traverse low-trust proxies (e.g., apistore.space)."**
+**"Design a practical system for using powerful agentic AI CLI tools on a VPS in YOLO mode while minimizing leakage risk of crypto wallet tokens, Telegram bot secrets, private keys, and similar high-impact credentials — even when traffic may traverse low-trust proxies."**
 
 *Cycle started: 2026-05-15 08:57*
 

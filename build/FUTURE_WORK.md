@@ -84,7 +84,7 @@ These are sometimes confused for "future work" but are actually either done, def
 
 ## Lessons from first live-traffic test (post-v0)
 
-These came out of pointing the proxy at a real Claude Code session against `apistore.space` and pasting a list of 30 fake-credential samples. Not bugs left to fix — bugs we already fixed — but the *patterns* behind them are worth keeping.
+These came out of pointing the proxy at a real Claude Code session against an untrusted upstream proxy and pasting a list of 30 fake-credential samples. Not bugs left to fix — bugs we already fixed — but the *patterns* behind them are worth keeping.
 
 ### 1. Length-mutating proxies must own Content-Length
 
