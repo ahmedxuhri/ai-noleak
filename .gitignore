@@ -1,0 +1,12 @@
+build/bin/
+
+.claude/
+.cursor/
+.windsurf/
+.openclaw/
+.hermes/
+.github/copilot/hooks.json
+
+*.log
+*.tmp
+*.bak
