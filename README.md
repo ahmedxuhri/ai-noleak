@@ -64,9 +64,12 @@ All three layers share a single local vault daemon (`noleakd`) that stores the p
 
 ## Threat & Security Model
 
-`ai-noleak` runs as a local MITM proxy. In security engineering, concentrating plaintext credentials and upstream API keys in a local daemon introduces a potential target. `ai-noleak` addresses this threat model with the following controls:
+`ai-noleak` acts as a local HTTP reverse proxy. Unlike traditional MITM proxies that require installing a custom Root CA certificate to decrypt TLS traffic (which introduces high security risks), `ai-noleak` requires zero certificate installation. You simply point your AI CLI tools to `http://127.0.0.1:9999/v1` over plaintext HTTP locally. The proxy intercepts, scans, and redacts the plaintext requests in local memory, and then forwards the sanitized payload to the upstream provider (e.g. Anthropic or OpenAI) over a secure, encrypted outbound HTTPS connection.
+
+`ai-noleak` addresses this threat model with the following controls:
 
 - **100% Local Isolation**: No telemetry is ever sent. The proxy preserves the configured provider authorization keys so that upstream requests succeed, but unrelated local secrets and prompt content are redacted on local CPU cycles before leaving the host.
+- **No TLS CA/MITM Needed**: By acting as a local reverse proxy rather than a network-wide TLS interceptor, `ai-noleak` does not require root privileges or custom root CA certificates. Plaintext traffic is only transmitted over the local loopback interface (`127.0.0.1`), meaning no unencrypted traffic leaves your machine.
 - **Strict Peer UID Verification**: The vault daemon (`noleakd`) communicates with the proxy and wrapper via a Unix Domain Socket (UDS). Connections are validated at the kernel level using peer credentials checking (`SO_PEERCRED` on Linux, `LOCAL_PEERCRED` on macOS). Only processes owned by the exact same User ID (UID) that started the daemon can query the vault.
 - **Privilege Separation**: The intercepting HTTP proxy runs with read-only capabilities with respect to the vault database. It can query the AC state and check placeholder bindings, but it cannot dump the plaintext vault or modify secret values. Mutating commands (like `rotate`, `review`, and manual `add`) are restricted to direct client invocations.
 - **Encryption at Rest**: When running in persistent mode (default), the vault file is encrypted with AES-256-GCM. The key is derived using Argon2id from a master passphrase prompted once at service startup.
@@ -92,13 +95,27 @@ This prevents accidental leakage of unrelated local secrets into AI requests (th
 
 ### Quick Install (Linux & macOS)
 
-Install the prebuilt binary matching your OS and architecture with a single shell command:
+You can install `ai-noleak` using one of the following methods:
 
+#### Method A: Direct One-Liner (Fastest)
 ```sh
 curl -fsSL https://raw.githubusercontent.com/ahmedxuhri/ai-noleak/main/scripts/install.sh | sh
 ```
 
-*This installs the binaries (`noleak`, `noleakd`, and `noleak-watch`) into `~/.local/bin` (or `/usr/local/bin` if run as root).*
+#### Method B: Verified Installation (Recommended)
+To audit the installation script and verify its integrity before execution:
+```sh
+# 1. Download the installer script
+curl -fsSL -o install.sh https://raw.githubusercontent.com/ahmedxuhri/ai-noleak/main/scripts/install.sh
+
+# 2. Verify the installer's checksum matches the official hash
+echo "6a37d48892d15aa42c67a922cbfd71b35a220e8906b17673563ba0498e63b9f8  install.sh" | sha256sum -c -
+
+# 3. Run the installer
+sh install.sh && rm install.sh
+```
+
+*Note: Binaries (`noleak`, `noleakd`, and `noleak-watch`) are installed to `~/.local/bin` (or `/usr/local/bin` if run as root).*
 
 ### Build from Source (Alternative)
 
@@ -274,7 +291,10 @@ printf "\x1b[200~ghp_A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8\x1b[201~\n" \
 
 ## Limitations & macOS Caveats
 
-- **File Watcher (`noleak-watch`)**: The watcher monitors directory changes using filesystem events (driven by `fsnotify`). On macOS, this uses the FSEvents/kqueue subsystems. While fully functional, macOS file events can occasionally be coalesced or delayed by the operating system under high disk load. 
+- **File Watcher (`noleak-watch`)**: The watcher monitors directory changes using filesystem events (driven by `fsnotify`). On macOS, this uses the FSEvents/kqueue subsystems.
+  - **FSEvents Delay & Coalescing**: Under heavy disk I/O, macOS may coalesce filesystem events or delay them by several seconds. If an AI agent writes a secret to a watched log file and immediately reads it back within milliseconds, Layer 3 (file watcher) might not react fast enough to redact it before the read occurs.
+  - **Replay/Snapshot Vulnerability**: If the CLI tool does not persist snapshots directly to disk in a watched directory, or if it writes logs to directories outside the configured watch paths, Layer 3 cannot protect them. We strongly recommend configuring explicit directories using the `--redact <path>` flags if your agent writes logs to custom directories.
+  - **Recommendation**: Do not rely on Layer 3 alone as a fallback for high-throughput, low-latency redaction. Always combine it with Layer 2 (outbound HTTP proxy) which intercepts secrets synchronously at the request level.
 - **PTY Wrapper (`noleak run`)**: Designed for bracketed-paste interception. Raw keys typed character-by-character are not caught by the PTY wrapper (Layer 1), but they are fully caught by the outbound proxy (Layer 2) before leaving the machine.
 - **Protocols**: The proxy supports JSON-based request bodies and SSE event streams. Requests utilizing unsupported content encodings (e.g. `brotli`, `zstd`, or `deflate`) are failed closed with an HTTP `502 Bad Gateway` to prevent silent redaction bypasses.
 - **Placeholder Semantics**:
@@ -282,6 +302,42 @@ printf "\x1b[200~ghp_A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8\x1b[201~\n" \
   - **Ephemeral Mode** (`--ephemeral`): The master secret is kept strictly in-memory and generated fresh on every boot. Placeholders derived in ephemeral mode are only valid for that run and will change upon daemon restart.
 
 ---
+
+---
+
+## Trust but Verify (Auditing the Proxy)
+
+Security tools should never be trusted blindly. Here is how you can verify and audit `ai-noleak` to ensure it performs exactly as documented:
+
+### 1. Verify Local Isolation (Network Audit)
+`ai-noleak` contains no telemetry, analytics, or phone-home calls. You can verify this by checking local socket listening states:
+```sh
+# Verify the daemon ONLY listens on a local Unix Domain Socket (not a TCP port)
+ss -xlp | grep noleakd
+
+# Verify the proxy only listens on local loopback (127.0.0.1:9999)
+ss -tulpn | grep 9999
+```
+To audit outbound network connections, you can monitor the PID of the proxy. The only outbound connection established should be directly to your configured upstream AI provider endpoint (e.g., `api.anthropic.com` or `api.openai.com`) when a request is actively being forwarded:
+```sh
+# Monitor outbound network sockets opened by the proxy
+lsof -i -a -p $(pgrep noleak)
+```
+
+### 2. Verify Encrypted Storage
+When running in persistent mode, all vault entries are stored in `~/.noleak/vault.bin`. You can verify that this file is fully encrypted (using AES-256-GCM) and cannot be decrypted without your passphrase:
+```sh
+# Try reading the file; it should output binary garbage and contain no plaintext secrets
+strings ~/.noleak/vault.bin
+hexdump -C ~/.noleak/vault.bin
+```
+
+### 3. Audit the Source Code
+The codebase is extremely lightweight (~4,000 lines of Go code), does not use any heavy external frameworks, and relies almost entirely on the Go standard library (with the exception of `fsnotify`, `cobra`, `yaml`, and `x/crypto`). You can review the complete codebase at any time, run tests, and compile it yourself to guarantee the binaries match:
+```sh
+# Clone and build it yourself
+make build
+```
 
 ---
 
