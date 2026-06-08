@@ -137,6 +137,9 @@ func (w *Watcher) Run(ctx context.Context) error {
 			if ev.Op&(fsnotify.Create|fsnotify.Write) == 0 {
 				continue
 			}
+			if strings.Contains(filepath.Base(ev.Name), ".noleak-tmp-") {
+				continue
+			}
 			if w.shouldDebounce(ev.Name) {
 				continue
 			}
