@@ -13,14 +13,14 @@ Your Terminal
      │
      ▼
 ┌─────────────────────────────────────────────────────────┐
-│  L1 · PTY Wrapper  (noleak run <cmd>)                   │
-│       Strips secrets from bracketed-paste before shell  │
+│  Layer 1 · Input (PTY Wrapper)                          │
+│        Strips secrets from bracketed-paste before shell │
 └───────────────────────┬─────────────────────────────────┘
                         │
                         ▼
 ┌─────────────────────────────────────────────────────────┐
-│  L2 · HTTP Proxy  (noleak start / noleak proxy)         │
-│       Scans & redacts outbound requests + AI responses  │
+│  Layer 2 · Transport (HTTP Proxy)                       │
+│        Scans & redacts outbound requests + AI responses │
 └───────────────────────┬─────────────────────────────────┘
                         │
                         ▼
@@ -28,25 +28,36 @@ Your Terminal
                         │
                         ▼
 ┌─────────────────────────────────────────────────────────┐
-│  L5 · File Watcher  (noleak-watch / noleak start)       │
-│       inotify scan of logs/history/snapshots on disk    │
+│  Layer 3 · Storage (File Watcher)                       │
+│        inotify/kqueue scan of log & history files       │
 └─────────────────────────────────────────────────────────┘
 ```
+
+*Note: The layers correspond to L1 (Physical/TTY input), L2 (Data Link/Transport proxy), and L5 (Session/Application storage files) OSI-metaphor layers defined in the [SPEC.md](SPEC.md).*
 
 All three layers share a single local vault daemon (`noleakd`) that stores the placeholder↔secret mapping in memory (ephemeral) or encrypted on disk (passphrase mode).
 
 ---
 
+## Threat & Security Model
+
+`ai-noleak` runs as a local MITM proxy. In security engineering, concentrating plaintext credentials and upstream API keys in a local daemon introduces a potential target. `ai-noleak` addresses this threat model with the following controls:
+
+- **100% Local Isolation**: No telemetry, raw keys, or prompt content ever leaves the host. All detection, registration, and substitution occurs entirely in local CPU cycles.
+- **Strict Peer UID Verification**: The vault daemon (`noleakd`) communicates with the proxy and wrapper via a Unix Domain Socket (UDS). Connections are validated at the kernel level using peer credentials checking (`SO_PEERCRED` on Linux, `LOCAL_PEERCRED` on macOS). Only processes owned by the exact same User ID (UID) that started the daemon can query the vault.
+- **Privilege Separation**: The intercepting HTTP proxy runs with read-only capabilities with respect to the vault database. It can query the AC state and check placeholder bindings, but it cannot dump the plaintext vault or modify secret values. Mutating commands (like `rotate`, `review`, and manual `add`) are restricted to direct client invocations.
+- **Encryption at Rest**: When running in persistent mode (default), the vault file is encrypted with AES-256-GCM. The key is derived using Argon2id from a master passphrase prompted once at service startup.
+
+---
+
 ## Why This Matters
 
-Agentic AI CLIs are extremely powerful because they write and execute shell commands to solve coding tasks. However, this gives them access to your environment variables, configuration files, and command history. 
-
-It is very easy for an agent to accidentally read a file containing a secret (e.g. `.env`, `.git/config`, `.bash_history`), include it in its prompt context, and send it to an upstream provider or an untrusted proxy.
+Agentic AI CLIs write and run commands, grep files, and read logs. If you have active environment variables, `.env` files, `.git/config` credentials, or raw tokens in your command history, it is incredibly easy for an agent to accidentally read them, inject them into its prompt context, and send them upstream to an AI API or third-party proxy.
 
 `ai-noleak` ensures that:
-1. Pasted secrets are scrubbed before the shell executes them (**L1**).
-2. Outbound HTTP requests to AI providers replace raw secrets with placeholders before leaving the machine (**L2**).
-3. Temporary shell snapshots, logs, or history files written to disk are cleaned immediately (**L5**).
+1. Pasted secrets are scrubbed before the shell executes them (**Layer 1**).
+2. Outbound HTTP requests to AI providers replace raw secrets with placeholders before leaving the machine (**Layer 2**).
+3. Temporary shell snapshots, logs, or history files written to disk are cleaned immediately (**Layer 3**).
 
 Upstream AI models only see placeholders like `@TOKEN_a9553f@`. If the model outputs the placeholder, `ai-noleak` translates it back to the real secret locally before returning it to the CLI. Your credentials never leak.
 
@@ -138,11 +149,32 @@ Expected output:
 
 ---
 
+## Interactive Demo
+
+Here is what running `noleak start` looks like when an agent attempts to leak a key:
+
+```text
+$ noleak start --ephemeral
+[noleakd] starting on /root/.noleak/sock (vault: ephemeral memory)
+[proxy] listening on 127.0.0.1:9999 -> https://api.anthropic.com
+[watcher] watching /root/.bash_history (redact)
+[watcher] watching /root/.claude/projects (redact)
+
+# In another terminal, an agent tries to call the API with an AWS key in the prompt:
+$ curl -s -X POST http://127.0.0.1:9999/v1/responses \
+    -d '{"prompt": "use AKIAIOSFODNN7EXAMPLE"}'
+
+# noleak terminal immediately intercepts and redacts:
+[proxy] 12:41:45 request /v1/responses -> @TOKEN_322a15@ (kind=aws_access_key_id, conf=1.00)
+```
+
+---
+
 ## Manual Testing
 
 You can verify all three protection layers without running a real AI CLI:
 
-### Test L2 — Proxy Redaction
+### Test Layer 2 — Proxy Redaction
 ```sh
 curl -s --max-time 10 \
   -X POST http://127.0.0.1:9999/v1/responses \
@@ -155,7 +187,7 @@ The console logs of `noleak start` will output:
 [proxy] request /v1/responses -> @TOKEN_xxxxxx@ (kind=aws_access_key_id, conf=1.00)
 ```
 
-### Test L5 — On-Disk Watcher Redaction
+### Test Layer 3 — On-Disk Watcher Redaction
 Start `noleak start` specifying a test directory:
 ```sh
 noleak start --ephemeral --redact ~/test-watch
@@ -168,7 +200,7 @@ cat ~/test-watch/leaked.txt
 # Output: GitHub PAT: @TOKEN_xxxxxx@
 ```
 
-### Test L1 — PTY Paste Filter
+### Test Layer 1 — PTY Paste Filter
 ```sh
 printf "\x1b[200~ghp_A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8\x1b[201~\n" \
   | noleak run bash
@@ -183,7 +215,7 @@ printf "\x1b[200~ghp_A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8\x1b[201~\n" \
 |---------|-------------|
 | `noleak start` | Start daemon, proxy, and watcher concurrently |
 | `noleak start --ephemeral` | Start all services in-memory (no passphrase) |
-| `noleak run <cmd> [args...]` | Run an interactive CLI inside the L1 PTY wrapper |
+| `noleak run <cmd> [args...]` | Run an interactive CLI inside the Layer 1 PTY wrapper |
 | `noleak doctor` | Validate the configuration and check service health |
 | `noleak list` | List all registered token placeholders |
 | `noleak review` | Review and approve/dismiss pending harvest tokens |
@@ -197,7 +229,7 @@ printf "\x1b[200~ghp_A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8\x1b[201~\n" \
 ## Limitations & macOS Caveats
 
 - **File Watcher (`noleak-watch`)**: The watcher monitors directory changes using filesystem events (driven by `fsnotify`). On macOS, this uses the FSEvents/kqueue subsystems. While fully functional, macOS file events can occasionally be coalesced or delayed by the operating system under high disk load. 
-- **PTY Wrapper (`noleak run`)**: Designed for bracketed-paste interception. Raw keys typed character-by-character are not caught by the PTY wrapper (L1), but they are fully caught by the outbound proxy (L2) before leaving the machine.
+- **PTY Wrapper (`noleak run`)**: Designed for bracketed-paste interception. Raw keys typed character-by-character are not caught by the PTY wrapper (Layer 1), but they are fully caught by the outbound proxy (Layer 2) before leaving the machine.
 - **Protocols**: The proxy supports JSON-based request bodies and SSE event streams. Requests utilizing non-standard compressed payloads other than `identity` and `gzip` (like `brotli` or `zstd`) will fail-open with a warning.
 
 ---

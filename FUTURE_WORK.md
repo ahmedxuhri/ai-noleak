@@ -1,122 +1,44 @@
-# Future Work — explicitly out of v0 scope
+# Future Work — explicitly out of v0.1.0 scope
 
-This document exists so the next person opening this repo (including future me) knows what is intentionally missing, and why. The v0 build is feature-complete against `SPEC.md` and ships a portable binary set. What's listed below is the **deployment and ergonomics layer** that turns a working tool into a product, but is orthogonal to the security guarantees the spec promises.
-
-Do **not** treat any of these as deferred bugs. They are deferred features. Ship v0 first; revisit when usage data shows which one matters most.
+This document outlines the deferred features and design choices for `ai-noleak`. The v0.1.0 release is feature-complete against the core specification, providing a robust, multi-layer secret leak prevention tool.
 
 ---
 
-## (3) Install script
+## completed in v0.1.0
 
-A `install.sh` that:
+The following items were originally listed as future work but have been fully implemented in the v0.1.0 release:
 
-- Detects host arch (`uname -m`) and OS (`uname -s`).
-- Downloads the matching tarball from a GitHub Release URL.
-- Verifies the signature (cosign or minisign — pick one and document the public key in the repo).
-- Places `noleakd`, `noleak-watch`, `noleak` into `/usr/local/bin/` (or `~/.local/bin` for non-root).
-- Optionally drops systemd user unit files (`~/.config/systemd/user/noleakd.service`, etc.) if `systemctl --user` is available; otherwise prints the equivalent `nohup` / `screen` invocation and exits.
-- Runs `noleak init` for the bootstrap harvest.
-
-Intentionally out of scope for v0 because:
-
-- It depends on having a release pipeline (item 5).
-- The current `make build` + manual copy works for a single VPS deployment.
-- Adding it now would invite scope creep into "but on Alpine it should also do X" — better to ship v0, install on one or two real boxes, and learn what the script actually needs to handle.
-
-**When to revisit:** when the same install steps have been done by hand on three or more VPSes and it's getting boring.
+- **All-in-One Service Manager (`noleak start`)**: Simplifies the "3 terminals" friction by allowing the daemon, HTTP proxy, and watcher to be launched concurrently in a single command with multiplexed, prefixed logging.
+- **Mac OS Support**: macOS (darwin/amd64 and darwin/arm64) is fully supported. Sockets now use `GetsockoptXucred` for same-UID peer credentials verification.
+- **Prebuilt Release Installer**: An enhanced one-liner install script (`install.sh`) that auto-detects host OS/architecture and downloads signed/verified prebuilt binaries from GitHub Releases, falling back to source compilation if Go is present.
+- **CI Build Matrix & Releases**: Automatic GitHub Actions workflows compile releases for Linux and macOS targets and publish them to GitHub Releases on tag pushes.
 
 ---
 
-## (4) Deployment documentation
+## v1.0 Roadmap — Deferred Features
 
-A `docs/install-vps.md` (and `docs/install-darwin.md` if macOS becomes relevant) covering:
+The following items are orthogonal to the core security guarantees but would improve the ergonomics and robustness of the tool:
 
-- One-liner install via the script from item 3.
-- Manual install for paranoid users (download tarball, verify signature, copy binaries, write unit file).
-- How to set `ANTHROPIC_BASE_URL=http://127.0.0.1:9999/v1` for each agent CLI (Claude Code, Codex, Cursor, OpenClaw — each has a slightly different config file).
-- How to migrate off Warden/Cloak (uninstall hooks, remove `~/.prismor`, remove the `warden` symlink).
-- Troubleshooting: what to do when `noleakd` won't unlock, when the proxy returns 502, when the watcher reports "no rules registered."
-- Rotation playbook for the existing on-disk leakage (i.e. the 165 detections the bootstrap surfaces on first run).
+### (1) Web Dashboard / TUI Improvements
+- A terminal-based user interface for `noleak review` to allow bulk acceptance, rejection, and modification of pending harvested secrets.
+- Grouping pending secrets by source directory and token type for rapid sorting.
 
-Intentionally out of scope for v0 because:
+### (2) Native Package Managers
+- Distributing `noleak` via package repositories like Homebrew (`brew`) for macOS, Apt (`.deb`), and Yum/Dnf (`.rpm`) for Linux, rather than relying solely on `curl | sh` scripts.
 
-- Documentation written before deployment is fiction. We have not yet deployed `noleak` on a real VPS end-to-end. Anything I write today is informed by the test suite and the spec, not by the way the system actually behaves the first time it meets a user.
-- Better written as a real session journal during the first deployment, then refactored into docs.
+### (3) Automated Provider API Rotation
+- While a manual rotation worksheet is printed as a CSV (`noleak rotate-list`), automatically triggering rotation via provider APIs (e.g. creating a new AWS key and calling IAM to disable the old one) is deferred to minimize the danger of state corruption.
 
-**When to revisit:** after the first real deployment, ideally with a second person walking through the steps and noting where they got confused.
-
----
-
-## (5) CI build matrix
-
-A GitHub Actions (or similar) workflow that:
-
-- Builds `noleakd`, `noleak-watch`, `noleak` for `linux/amd64`, `linux/arm64`, `linux/armv7`.
-- Runs `go vet`, `go test ./...`, and a fuzz target on the detector against a fixture corpus.
-- Tags releases with semantic versions and uploads tarballs to the GitHub Releases page.
-- Signs binaries (cosign or minisign) and publishes the public key in the repo.
-
-Intentionally out of scope for v0 because:
-
-- The repo is currently in a single VPS workspace, not a public GitHub project. Setting up CI for one developer's local copy is premature.
-- `go build` works on the host. Cross-compilation works (`GOOS=linux GOARCH=arm64 go build ./...`) without CI infrastructure.
-
-**When to revisit:** when the project moves to a public repo, or when more than one person is committing.
+### (4) Brotli and Zstandard compression support
+- The proxy currently supports `identity` and `gzip` content encodings. If future AI agents default to Brotli (`br`) or Zstandard (`zstd`) for streaming, the proxy must be updated with native decoders to inspect outbound traffic.
 
 ---
 
-## Other work that is NOT in this list (and why)
+## Lessons from live-traffic testing
 
-These are sometimes confused for "future work" but are actually either done, deferred to v1, or out of scope by design:
+These lessons were gathered by dogfooding `ai-noleak` against a real Claude Code session with 30+ fake credentials pasted:
 
-| Item | Status |
-|---|---|
-| SQLCipher backend | Decided against. AES-GCM blob is sufficient at this scale and avoids CGO. |
-| gzip request/response handling | **DONE** (was originally deferred). Decode-redact-recompress round-trip is implemented and tested. See `internal/proxy/proxy.go` `decodeBody`/`encodeBody` and `gzip_test.go`. |
-| Upstream proxy auth hardening | **DONE**. `proxy_preserve_headers` explicitly preserves end-to-end auth/version headers, `proxy_passthrough_tokens` exempts intentional upstream-proxy tokens from body redaction, and non-2xx request logs include a redacted response snippet. |
-| Multi-agent gRPC fan-out | Tracked separately as task #14, deferred until the first concrete multi-agent deployment. |
-| 3s Esc-to-undo on paste | v1 polish; v0 substitutes immediately because L2 is the load-bearing defense. |
-| Web dashboard | Spec §12 explicitly excludes it. |
-| Provider-API rotation | Spec §12 — rotation worksheet is human-driven. |
-| macOS / FreeBSD watcher | Linux-only by design (inotify); document as "Linux VPS tool". |
-| Telegram-token-format-v2 detection | If a real false-negative shows up, add a regex. Don't pre-build for hypothetical formats. |
-
----
-
-## Lessons from first live-traffic test (post-v0)
-
-These came out of pointing the proxy at a real Claude Code session against an untrusted upstream proxy and pasting a list of 30 fake-credential samples. Not bugs left to fix — bugs we already fixed — but the *patterns* behind them are worth keeping.
-
-### 1. Length-mutating proxies must own Content-Length
-
-The proxy redacts secrets, which shrinks the body. Forwarding the client's original `Content-Length` header on top of a shorter body produced `400 invalid JSON: unexpected end of JSON input` from Anthropic. Eight turns in a row, because the failed turn replayed in conversation history. Fix lives in `copyHeaders` (strips `Content-Length`/`Content-Encoding`) plus a regression test that asserts upstream-received body length equals redacted body length.
-
-**Generalize:** any proxy that mutates body bytes must compute `Content-Length` itself, never inherit it. Cheap test: assert lengths agree on the wire.
-
-### 2. Brotli (and any future encoding) is fail-fast
-
-We support `identity` and `gzip`. Anything else returns 502 with a clear message. Adding `br` (brotli), `zstd`, `deflate` would be a small encoder-table change in `proxy.go`. **When to revisit:** if a future agent CLI ships with brotli enabled by default and 502s become a deployment hazard. Right now Claude Code, Codex, Cursor, Windsurf all default to `gzip` or no encoding, so brotli support is YAGNI.
-
-### 3. Test fixtures must be assembled at runtime
-
-When this codebase passes through the noleak proxy itself (e.g. when an agent edits the test files), any *literal credential string* in source gets redacted to `@TOKEN_xxx@` before it lands. Tests written with literal credential bodies become self-redacted in transit and start asserting on placeholders.
-
-Always build credential-shaped test bodies via `strings.Repeat`, `+` concatenation, or helper functions like the `mk()` in `connstring` tests. The source file should contain only fragments that, individually, do NOT match any credential regex.
-
-This is also why several of my earlier edit loops appeared to "fail" — I was writing literals, the proxy was redacting them in transit, the next round-trip kept the placeholder. Once detected, the fix is mechanical; the lesson is to never trust a literal credential string in source code that an agent might transmit.
-
-### 4. Stripe publishable / Twilio Auth Token / Datadog API key were intentionally NOT covered
-
-These are either public by design (Stripe `pk_live_…`) or indistinguishable from arbitrary 32–40 char hex blobs without surrounding context (Twilio Auth Token, Datadog raw hex). Adding regexes for them would cause unacceptable false-positive rates on hashes, UUIDs, commit SHAs, etc. The right approach if they become a real concern: add a **labeled** detector (`(?i)twilio[_-]?auth[_-]?token\s*[=:]\s*['"]?(<32hex>)`), the same shape as `aws_secret_access_key`.
-
-### 5. Per-request log line is now the load-bearing operator UX
-
-Without it, "no detections in this conversation" and "the proxy is bypassed" looked identical. Future operator-facing changes should preserve a per-request line at minimum; never go quieter than that.
-
----
-
-## Items that emerged from live testing and are intentionally NOT new TODO
-
-- **Gzipped streaming responses (SSE inside gzip).** Anthropic's `/v1/messages?stream=true` returns SSE; we don't currently decode-redact gzip-wrapped SSE because Anthropic doesn't gzip SSE in practice. If a future API surface does, the streaming path needs a decoding wrapper. Today it would surface as "client gets garbage on streaming" and the fix is local.
-- **Bracketed-paste fallback.** Some terminals (raw `nc`, weird tmux configs) disable bracketed paste. The L1 wrapper currently just doesn't catch typed/non-bracketed pastes. The L2 proxy still catches whatever ends up in an outbound request, so security is preserved; only the user-facing paste banner goes silent. Could add a typing-detection path as v1 polish.
-- **Watch debounce.** Currently 500 ms. Some agents emit several writes per second to a rotating log; a slow scan path could fall behind. Hasn't shown up in practice; benchmark before tightening.
+1. **Length-mutating proxies must own Content-Length**: Redacting secrets shrinks request bodies. Forwarding the original `Content-Length` header on a shorter body results in HTTP 400 errors from endpoints. `ai-noleak` strips the client's `Content-Length` and recomputes it dynamically after sanitization.
+2. **Brotli is fail-fast**: To prevent silent bypasses, any content-encoding other than `identity` or `gzip` returns an HTTP 502 with a clear explanation rather than passing raw traffic through.
+3. **Assemble test fixtures at runtime**: To prevent the proxy from self-redacting tests in transit, literal test credentials must never be committed to source files. They must be constructed dynamically (e.g. string concatenation) in code.
+4. **Stripe publishable/Twilio Auth tokens are excluded**: Generic hex keys of arbitrary lengths (without distinct prefixes like `sk_live_`) are indistinguishable from hashes or commit SHAs. Pre-building rules for them leads to high false-positive rates. They can be target-redacted by configuring explicit regexes in config.yaml.
