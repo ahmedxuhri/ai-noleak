@@ -11,3 +11,4 @@ build/bin/
 *.log
 *.tmp
 *.bak
+dist/

@@ -73,44 +73,19 @@ proxy_passthrough_tokens: []
 
 > **`proxy_passthrough_tokens`** — only for upstream-proxy auth tokens that *must* reach the upstream. Never put provider keys, bot tokens, or user secrets here.
 
-### 2 · Start the Vault Daemon
+### 2 · Start Services
+
+Start all three layers (vault daemon, HTTP proxy, and file watcher) concurrently in a single command:
 
 ```sh
 # Ephemeral (in-memory, no passphrase — good for testing):
-noleakd --ephemeral
+noleak start --ephemeral
 
-# Persistent (encrypted on disk):
-printf 'your-long-passphrase\n' | noleakd --pass-fd 0
+# Persistent (prompt for passphrase, encrypted on disk):
+noleak start
 ```
 
-### 3 · Start the Proxy
-
-In a second terminal:
-
-```sh
-noleak proxy
-```
-
-Expected output:
-```
-noleak proxy listening on 127.0.0.1:9999 -> https://api.openai.com
-```
-
-### 4 · Start the File Watcher
-
-In a third terminal:
-
-```sh
-noleak-watch
-```
-
-To watch extra paths:
-
-```sh
-noleak-watch --redact "$HOME/.bash_history,$HOME/.claude/projects"
-```
-
-### 5 · Point Your AI CLI at the Proxy
+### 3 · Point Your AI CLI at the Proxy
 
 Configure your agent CLI base URL to `http://127.0.0.1:9999/v1`.
 
@@ -126,20 +101,20 @@ env_key = "OPENAI_API_KEY"
 
 **Claude Code**: set `ANTHROPIC_BASE_URL=http://127.0.0.1:9999/v1`
 
-### 6 · Run the Health Check
+### 4 · Run the Health Check
 
 ```sh
 noleak doctor
 ```
 
-All three checks should be green:
+All checks should be green:
 ```
 [ok] daemon health
 [ok] proxy listen
 [ok] proxy upstream
 ```
 
-### 7 · Use the PTY Wrapper (optional)
+### 5 · Use the PTY Wrapper (optional)
 
 Wrap your shell so bracketed-paste is filtered too:
 
@@ -167,16 +142,17 @@ curl -s --max-time 10 \
 
 The proxy log will show:
 ```
-[noleak proxy] request /v1/responses -> @TOKEN_xxxxxx@ (kind=aws_access_key_id, conf=1.00)
+[proxy] request /v1/responses -> @TOKEN_xxxxxx@ (kind=aws_access_key_id, conf=1.00)
 ```
 The raw key never reaches the upstream.
 
 ### Test L5 — On-Disk Watcher Redaction
 
-```sh
-mkdir -p ~/test-watch
-noleak-watch --redact ~/test-watch &
+To watch a custom test directory:
 
+```sh
+noleak start --ephemeral --redact ~/test-watch
+# In another terminal:
 echo "GitHub PAT: ghp_A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8" > ~/test-watch/leaked.txt
 sleep 2
 cat ~/test-watch/leaked.txt

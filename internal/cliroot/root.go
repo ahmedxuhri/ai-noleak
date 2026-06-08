@@ -34,6 +34,7 @@ func Execute() error {
 		newHookCmd(),
 		newRunCmd(),
 		newProxyCmd(),
+		newStartCmd(),
 	)
 
 	return root.Execute()

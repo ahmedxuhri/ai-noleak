@@ -106,72 +106,30 @@ chmod 600 ~/.noleak/config.yaml
 
 ---
 
-## 5. Start the Vault Daemon
+## 5. Start Services Concurrently
 
-The daemon manages the placeholder↔secret vault.
+Instead of opening three separate terminals, start the vault daemon, HTTP proxy, and file watcher concurrently in a single foreground process:
 
-**Ephemeral (in-memory, good for testing):**
+**Ephemeral Mode (in-memory only, no passphrase, good for testing):**
 ```sh
-noleakd --ephemeral
+noleak start --ephemeral
 ```
 
-**Persistent (encrypted on disk, for daily use):**
+**Persistent Mode (prompts for passphrase, encrypted on disk):**
 ```sh
-printf 'your-long-passphrase\n' | noleakd --pass-fd 0
+noleak start
 ```
 
-For long-running use, wrap in `tmux`, `screen`, or a systemd user unit:
+For production use, you can run it inside `tmux`, `screen`, or a systemd user unit:
 
 ```sh
 # tmux example
-tmux new-session -d -s noleak-daemon 'noleakd --ephemeral'
-```
-
-Expected output:
-```
-noleakd 0.0.0-dev — listening on /root/.noleak/sock (vault: ephemeral memory)
+tmux new-session -d -s noleak-services 'noleak start'
 ```
 
 ---
 
-## 6. Start the Proxy
-
-In a second terminal (or tmux pane):
-
-```sh
-noleak proxy
-```
-
-Expected output:
-```
-noleak proxy listening on 127.0.0.1:9999 -> https://api.openai.com
-```
-
----
-
-## 7. Start the File Watcher
-
-In a third terminal:
-
-```sh
-noleak-watch
-```
-
-To watch additional paths explicitly:
-
-```sh
-noleak-watch --redact "$HOME/.bash_history,$HOME/.claude/projects,$HOME/.codex"
-```
-
-To purge (delete) files instead of redacting them:
-
-```sh
-noleak-watch --purge "$HOME/.codex/shell_snapshots"
-```
-
----
-
-## 8. Point Your Agent CLI at the Proxy
+## 6. Point Your Agent CLI at the Proxy
 
 ### OpenAI Codex (`~/.codex/config.toml`)
 
@@ -193,15 +151,13 @@ export ANTHROPIC_BASE_URL="http://127.0.0.1:9999/v1"
 
 Or add to `~/.bashrc` / `~/.zshrc` for persistence.
 
----
-
-## 9. Verify the Setup
+## 7. Verify the Setup
 
 ```sh
 noleak doctor
 ```
 
-All three checks should be green:
+All checks should be green:
 ```
 [ok] daemon health
 [ok] proxy listen
@@ -218,9 +174,9 @@ curl -s --max-time 10 \
   -d '{"model":"gpt-4o","input":"My AWS key is AKIAIOSFODNN7EXAMPLE","stream":true}'
 ```
 
-The proxy terminal should log:
+The proxy output will log:
 ```
-[noleak proxy] request /v1/responses -> @TOKEN_xxxxxx@ (kind=aws_access_key_id, conf=1.00)
+[proxy] request /v1/responses -> @TOKEN_xxxxxx@ (kind=aws_access_key_id, conf=1.00)
 ```
 
 The raw value `AKIAIOSFODNN7EXAMPLE` must not appear in outbound traffic.
@@ -231,7 +187,7 @@ The raw value `AKIAIOSFODNN7EXAMPLE` must not appear in outbound traffic.
 
 | Symptom | Fix |
 |---------|-----|
-| `daemon health` fails | `noleakd` is not running. Start it and check `~/.noleak/sock` exists. |
+| `daemon health` fails | `noleak start` has not been run, or socket file was removed. Run `noleak start --ephemeral`. |
 | `proxy_upstream is empty` | Set `proxy_upstream` in `~/.noleak/config.yaml`. |
 | Proxy log silent during agent use | Agent is bypassing the proxy. Fix the base URL setting. |
 | `unsupported Content-Encoding` | Proxy supports `identity` and `gzip`. Disable brotli/zstd in the client. |

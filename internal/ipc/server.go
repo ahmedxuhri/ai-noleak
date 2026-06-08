@@ -140,30 +140,6 @@ func (s *Server) handle(c net.Conn, log func(string, ...any)) {
 	}
 }
 
-// checkPeerCred enforces same-UID access. Returns nil iff the peer's effective
-// UID equals the daemon's own UID.
-func checkPeerCred(uc *net.UnixConn) error {
-	raw, err := uc.SyscallConn()
-	if err != nil {
-		return err
-	}
-	var cred *syscall.Ucred
-	var inner error
-	err = raw.Control(func(fd uintptr) {
-		cred, inner = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
-	})
-	if err != nil {
-		return err
-	}
-	if inner != nil {
-		return inner
-	}
-	if cred.Uid != uint32(os.Getuid()) {
-		return fmt.Errorf("uid mismatch: peer=%d self=%d", cred.Uid, os.Getuid())
-	}
-	return nil
-}
-
 // dispatch routes a request to the appropriate handler.
 func (s *Server) dispatch(req *Request) *Response {
 	switch req.Op {

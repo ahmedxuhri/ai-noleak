@@ -4,7 +4,7 @@ A step-by-step walkthrough to verify all three protection layers are working. Us
 
 ## Prerequisites
 
-- `noleakd`, `noleak proxy`, and `noleak-watch` all running (see [install.md](install.md))
+- Services running concurrently via `noleak start --ephemeral`
 - `noleak doctor` shows all green
 
 ---
@@ -76,10 +76,10 @@ curl -s --max-time 10 \
 
 ### Expected
 
-**Proxy terminal shows:**
+**Start logs show:**
 ```
-[noleak proxy] 12:41:45 request /v1/responses -> @TOKEN_322a15@ (kind=aws_access_key_id, conf=1.00)
-[noleak proxy] 12:41:45 POST /v1/responses -> /v1/responses [200]
+[proxy] 12:41:45 request /v1/responses -> @TOKEN_322a15@ (kind=aws_access_key_id, conf=1.00)
+[proxy] 12:41:45 POST /v1/responses -> /v1/responses [200]
 ```
 
 **Mock upstream receives** (body never contains the raw key):
@@ -97,16 +97,16 @@ The file watcher monitors directories with `inotify` and rewrites files in-place
 
 ### Setup
 
-Start a watcher on a test directory:
+Ensure you run `noleak start` with the `--redact` flag pointing to the test directory:
 
 ```sh
 mkdir -p ~/test-watch
-noleak-watch --redact ~/test-watch &
+noleak start --ephemeral --redact ~/test-watch
 ```
 
 ### Steps
 
-Write a file containing two known secrets:
+In another terminal, write a file containing two known secrets:
 
 ```sh
 echo "GitHub PAT: ghp_A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8 and AWS: AKIAIOSFODNN7EXAMPLE" \
@@ -125,9 +125,9 @@ sleep 2 && cat ~/test-watch/leaked.txt
 GitHub PAT: @TOKEN_2b8645@ and AWS: @TOKEN_322a15@
 ```
 
-The watcher terminal logs:
+The start terminal logs:
 ```
-noleak-watch: redacted /root/test-watch/leaked.txt (2 matches)
+[watcher] redacted /root/test-watch/leaked.txt (2 matches)
 ```
 
 Both raw secrets are gone from disk.
@@ -163,6 +163,6 @@ noleak review
 | Sign | Meaning |
 |------|---------|
 | Proxy log shows no detection lines | Proxy not in the request path — check agent base URL |
-| Raw secret appears in mock upstream body | Proxy not running or bypassed |
+| Raw secret appears in mock upstream body | Services not running or proxy bypassed |
 | File not redacted after 5 seconds | Watcher not watching that directory — check `--redact` path |
-| `noleak doctor` shows `[fail] daemon health` | `noleakd` is not running |
+| `noleak doctor` shows `[fail] daemon health` | `noleak start` has not been run |

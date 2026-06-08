@@ -21,6 +21,10 @@ jobs:
           - goos: linux
             goarch: arm
             goarm: "7"
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -60,3 +64,47 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/SHA256SUMS-*.txt
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          pattern: ai-noleak-*
+          merge-multiple: true
+
+      - name: Consolidate Checksums
+        run: |
+          cd release-artifacts
+          cat SHA256SUMS-*.txt > SHA256SUMS.txt
+          rm -f SHA256SUMS-*.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-artifacts/*.tar.gz
+            release-artifacts/SHA256SUMS.txt
+          body: |
+            ## ai-noleak ${{ github.ref_name }}
+            
+            This release contains prebuilt binaries for Linux and macOS (darwin).
+            
+            ### SHA256 Checksums
+            ```text
+            $(cat release-artifacts/SHA256SUMS.txt)
+            ```
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
