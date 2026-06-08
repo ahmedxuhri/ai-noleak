@@ -1,44 +1,43 @@
-# Manual VPS Install
+# Installation Guide
 
-Step-by-step source build for Linux. Every command is explicit so you can audit the install.
+Step-by-step installation instructions for Linux and macOS.
 
-## Prerequisites
+## Option A — Quick One-Line Release Installer (Recommended)
 
-- Linux (x86_64 or arm64)
-- Go 1.22+ (`go version`)
-- `git`
-
-If Go is not installed:
+Download and install prebuilt binaries (`noleak`, `noleakd`, and `noleak-watch`) matching your operating system and CPU architecture:
 
 ```sh
-# Quick Go install (adjust version as needed)
+curl -fsSL https://raw.githubusercontent.com/ahmedxuhri/ai-noleak/main/scripts/install.sh | sh
+```
+
+The script fetches the latest tag, extracts binaries, installs them to `~/.local/bin` (or `/usr/local/bin` if run as root), and creates a default `~/.noleak/config.yaml`.
+
+---
+
+## Option B — Compiling from Source Checkout
+
+If you prefer to audit and compile the binaries directly on your machine:
+
+### Prerequisites
+
+- Go 1.22+ (`go version`)
+- `git`
+- `make`
+
+If Go is not installed on your system:
+```sh
+# Quick Go install (adjust version/arch as needed)
 curl -LO https://go.dev/dl/go1.22.4.linux-amd64.tar.gz
 tar -C /usr/local -xzf go1.22.4.linux-amd64.tar.gz
 export PATH=$PATH:/usr/local/go/bin
 ```
-
----
-
-## Option A — One-Line Install Script
-
-```sh
-git clone https://github.com/ahmedxuhri/ai-noleak.git
-cd ai-noleak
-sh scripts/install.sh
-```
-
-The script builds all three binaries, installs them to `~/.local/bin` (or `/usr/local/bin` if root), and creates a starter `~/.noleak/config.yaml` if one does not exist.
-
----
-
-## Option B — Manual Steps
 
 ### 1. Clone and Build
 
 ```sh
 git clone https://github.com/ahmedxuhri/ai-noleak.git
 cd ai-noleak
-make build
+sh scripts/install.sh
 ```
 
 Binaries land in `./bin/`:
