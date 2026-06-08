@@ -55,10 +55,7 @@ func main() {
 		log.Fatalf("noleakd: vault: %v", err)
 	}
 
-	master, err := vault.NewMasterSecret()
-	if err != nil {
-		log.Fatalf("noleakd: master secret: %v", err)
-	}
+	master := v.MasterSecret()
 
 	server := ipc.NewServer(ipc.ServerConfig{
 		SocketPath:   cfg.SocketPath,

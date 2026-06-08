@@ -129,9 +129,10 @@ type ListEntry struct {
 
 // HealthResponse reports daemon vitals. Used by systemd / `noleak status`.
 type HealthResponse struct {
-	Version       string `json:"version"`
-	Unlocked      bool   `json:"unlocked"`
-	VaultEntries  int    `json:"vault_entries"`
-	PendingReview int    `json:"pending_review"`
-	UptimeSeconds int64  `json:"uptime_seconds"`
+	Version         string `json:"version"`
+	Unlocked        bool   `json:"unlocked"`
+	VaultEntries    int    `json:"vault_entries"`
+	PendingReview   int    `json:"pending_review"`
+	UptimeSeconds   int64  `json:"uptime_seconds"`
+	MasterSecretB64 string `json:"master_secret_b64,omitempty"`
 }

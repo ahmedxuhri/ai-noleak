@@ -13,7 +13,6 @@ import (
 	"noleak/internal/detect"
 	"noleak/internal/ipc"
 	"noleak/internal/proxy"
-	"noleak/internal/vault"
 )
 
 // newProxyCmd starts the L2 local API proxy. Loads ~/.noleak/config.yaml
@@ -58,10 +57,10 @@ func runProxy() error {
 	// data consistent across mutations from any source (paste, harvest,
 	// review).
 	client := ipc.NewClient(cfg.SocketPath)
-
-	master, err := vault.NewMasterSecret()
-	if err != nil {
-		return err
+	vaultAdapter := &daemonProxyVault{client: client}
+	master := vaultAdapter.MasterSecret()
+	if len(master) == 0 {
+		return fmt.Errorf("proxy: could not retrieve master secret from vault daemon; is the daemon running?")
 	}
 
 	srv, err := proxy.New(proxy.Config{
@@ -69,7 +68,7 @@ func runProxy() error {
 		Upstream:            cfg.ProxyUpstream,
 		PreserveHeaders:     cfg.ProxyPreserveHeaders,
 		PassthroughTokens:   cfg.ProxyPassthroughTokens,
-		Vault:               &daemonProxyVault{client: client},
+		Vault:               vaultAdapter,
 		Detector:            detect.New(detect.Options{}),
 		MasterSecret:        master,
 		AutoRegisterMinConf: cfg.AutoRegisterMinConf,

@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,6 +46,11 @@ const (
 	nonceSize   = 12
 )
 
+type vaultPayload struct {
+	MasterSecretHex string  `json:"master_secret_hex"`
+	Entries         []Entry `json:"entries"`
+}
+
 // OpenFile loads an existing vault from disk or creates an empty one.
 // `key` must be exactly 32 bytes — the master key sourced from libsecret
 // or a passphrase-derived key. The caller is responsible for keying.
@@ -67,8 +73,18 @@ func OpenFile(path string, key []byte) (Vault, error) {
 		saveDelay:   100 * time.Millisecond,
 	}
 
-	if err := fv.load(); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
+	if err := fv.load(); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// Fresh vault: generate a new master secret and mark dirty so it gets saved on close/save.
+			ms, err := NewMasterSecret()
+			if err != nil {
+				return nil, err
+			}
+			fv.memoryVault.masterSecret = ms
+			fv.markDirty()
+		} else {
+			return nil, err
+		}
 	}
 	return fv, nil
 }
@@ -101,9 +117,30 @@ func (f *fileVault) load() error {
 	}
 
 	var entries []Entry
-	if err := json.Unmarshal(plaintext, &entries); err != nil {
-		return fmt.Errorf("vault: unmarshal: %w", err)
+	var payload vaultPayload
+	if err := json.Unmarshal(plaintext, &payload); err == nil && payload.MasterSecretHex != "" {
+		ms, err := hex.DecodeString(payload.MasterSecretHex)
+		if err != nil {
+			return fmt.Errorf("vault: decode master secret: %w", err)
+		}
+		f.memoryVault.masterSecret = ms
+		entries = payload.Entries
+	} else {
+		// Fallback to legacy array representation
+		var legacyEntries []Entry
+		if err := json.Unmarshal(plaintext, &legacyEntries); err != nil {
+			return fmt.Errorf("vault: unmarshal: %w", err)
+		}
+		entries = legacyEntries
+		// Generate new master secret for legacy vault
+		ms, err := NewMasterSecret()
+		if err != nil {
+			return err
+		}
+		f.memoryVault.masterSecret = ms
+		f.markDirty() // Save it next time
 	}
+
 	f.memoryVault.mu.Lock()
 	defer f.memoryVault.mu.Unlock()
 	for i := range entries {
@@ -128,9 +165,14 @@ func (f *fileVault) save() error {
 			entries = append(entries, *e)
 		}
 	}
+	msHex := hex.EncodeToString(f.memoryVault.masterSecret)
 	f.memoryVault.mu.RUnlock()
 
-	plaintext, err := json.Marshal(entries)
+	payload := vaultPayload{
+		MasterSecretHex: msHex,
+		Entries:         entries,
+	}
+	plaintext, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("vault: marshal: %w", err)
 	}

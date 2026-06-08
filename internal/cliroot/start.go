@@ -62,10 +62,7 @@ func runStart(ephemeral bool, extraRedact, extraPurge []string) error {
 	}
 	defer v.Close()
 
-	master, err := vault.NewMasterSecret()
-	if err != nil {
-		return fmt.Errorf("master secret: %w", err)
-	}
+	master := v.MasterSecret()
 
 	// 2. Start Daemon Server
 	server := ipc.NewServer(ipc.ServerConfig{

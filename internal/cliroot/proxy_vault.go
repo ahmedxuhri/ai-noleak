@@ -61,6 +61,15 @@ func (d *daemonProxyVault) Delete(ph string) error                  { return err
 func (d *daemonProxyVault) MarkUse(ph string)                       {}
 func (d *daemonProxyVault) Close() error                            { return nil }
 
+func (d *daemonProxyVault) MasterSecret() []byte {
+	resp, err := d.client.Call(&ipc.Request{Op: ipc.OpHealth})
+	if err != nil || resp.Error != "" || resp.Health == nil || resp.Health.MasterSecretB64 == "" {
+		return nil
+	}
+	ms, _ := base64.StdEncoding.DecodeString(resp.Health.MasterSecretB64)
+	return ms
+}
+
 func (d *daemonProxyVault) List(includeArchived bool) ([]vault.Entry, error) {
 	resp, err := d.client.Call(&ipc.Request{Op: ipc.OpList})
 	if err != nil {

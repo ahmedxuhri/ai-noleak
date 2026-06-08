@@ -83,11 +83,20 @@ jobs:
           pattern: ai-noleak-*
           merge-multiple: true
 
-      - name: Consolidate Checksums
+      - name: Consolidate Checksums and Generate Body
         run: |
           cd release-artifacts
           cat SHA256SUMS-*.txt > SHA256SUMS.txt
           rm -f SHA256SUMS-*.txt
+          
+          echo "## ai-noleak ${{ github.ref_name }}" > ../release-body.md
+          echo "" >> ../release-body.md
+          echo "This release contains prebuilt binaries for Linux and macOS (darwin)." >> ../release-body.md
+          echo "" >> ../release-body.md
+          echo "### SHA256 Checksums" >> ../release-body.md
+          echo "\`\`\`text" >> ../release-body.md
+          cat SHA256SUMS.txt >> ../release-body.md
+          echo "\`\`\`" >> ../release-body.md
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -95,15 +104,7 @@ jobs:
           files: |
             release-artifacts/*.tar.gz
             release-artifacts/SHA256SUMS.txt
-          body: |
-            ## ai-noleak ${{ github.ref_name }}
-            
-            This release contains prebuilt binaries for Linux and macOS (darwin).
-            
-            ### SHA256 Checksums
-            ```text
-            $(cat release-artifacts/SHA256SUMS.txt)
-            ```
+          body_path: release-body.md
           draft: false
           prerelease: false
         env:

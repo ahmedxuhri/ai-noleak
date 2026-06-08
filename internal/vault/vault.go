@@ -91,6 +91,9 @@ type Vault interface {
 
 	// Close releases backing resources. Subsequent calls return ErrClosed.
 	Close() error
+
+	// MasterSecret returns the vault's stable master secret used to derive placeholders.
+	MasterSecret() []byte
 }
 
 var (
@@ -127,22 +130,23 @@ func NewMasterSecret() ([]byte, error) {
 	return buf, nil
 }
 
-// memoryVault is the in-process backend. Used by tests and (briefly) by
-// the daemon during boot before the on-disk vault is unsealed.
 type memoryVault struct {
-	mu      sync.RWMutex
-	byPH    map[string]*Entry
-	byValue map[string]string // value -> placeholder
-	order   []string          // insertion order for List
-	closed  bool
-	nextID  int64
+	mu           sync.RWMutex
+	byPH         map[string]*Entry
+	byValue      map[string]string // value -> placeholder
+	order        []string          // insertion order for List
+	closed       bool
+	nextID       int64
+	masterSecret []byte
 }
 
 // NewMemory constructs an empty in-memory vault.
 func NewMemory() Vault {
+	ms, _ := NewMasterSecret()
 	return &memoryVault{
-		byPH:    make(map[string]*Entry),
-		byValue: make(map[string]string),
+		byPH:         make(map[string]*Entry),
+		byValue:      make(map[string]string),
+		masterSecret: ms,
 	}
 }
 
@@ -344,6 +348,12 @@ func (v *memoryVault) Close() error {
 	v.byValue = nil
 	v.order = nil
 	return nil
+}
+
+func (v *memoryVault) MasterSecret() []byte {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.masterSecret
 }
 
 func cloneEntry(e *Entry) *Entry {

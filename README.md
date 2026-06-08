@@ -1,10 +1,33 @@
 # ai-noleak
 
-> **Local secret-leak prevention for agentic AI CLIs (like Claude Code, Cursor, OpenAI Codex).**
+> **Local redaction proxy for preventing AI coding agents from leaking your secrets.**
 
-`ai-noleak` sits between your terminal and any AI API. It intercepts credentials, tokens, and API keys **before they leave your machine** — replacing them with deterministic local placeholders (`@TOKEN_xxxxxx@`) across three independent protection layers.
+`ai-noleak` sits between your terminal and any AI API. It intercepts accidentally exposed local secrets, credentials, tokens, and API keys — replacing them with deterministic local placeholders (`@TOKEN_xxxxxx@`) across three independent protection layers before they can reach the upstream model.
 
 ---
+
+## 30-Second Demo
+
+```text
+1. You run a command containing a secret:
+$ claude "Write a script to upload backup.tar to S3 using AKIAIOSFODNN7EXAMPLE"
+
+2. ai-noleak intercepts the outbound prompt to Anthropic and redacts the secret:
+[proxy] POST /v1/messages -> Redacted aws_access_key_id (confidence=1.00)
+        Replaced "AKIAIOSFODNN7EXAMPLE" with "@TOKEN_8f51a2@"
+
+3. The upstream model receives the safe prompt:
+"Write a script to upload backup.tar to S3 using @TOKEN_8f51a2@"
+
+4. The model answers using the placeholder:
+"Here is your script: export AWS_ACCESS_KEY_ID=@TOKEN_8f51a2@ ..."
+
+5. ai-noleak translates the placeholder back to the real secret locally:
+"Here is your script: export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE ..."
+```
+
+---
+
 
 ## How It Works
 
@@ -43,7 +66,7 @@ All three layers share a single local vault daemon (`noleakd`) that stores the p
 
 `ai-noleak` runs as a local MITM proxy. In security engineering, concentrating plaintext credentials and upstream API keys in a local daemon introduces a potential target. `ai-noleak` addresses this threat model with the following controls:
 
-- **100% Local Isolation**: No telemetry, raw keys, or prompt content ever leaves the host. All detection, registration, and substitution occurs entirely in local CPU cycles.
+- **100% Local Isolation**: No telemetry is ever sent. The proxy preserves the configured provider authorization keys so that upstream requests succeed, but unrelated local secrets and prompt content are redacted on local CPU cycles before leaving the host.
 - **Strict Peer UID Verification**: The vault daemon (`noleakd`) communicates with the proxy and wrapper via a Unix Domain Socket (UDS). Connections are validated at the kernel level using peer credentials checking (`SO_PEERCRED` on Linux, `LOCAL_PEERCRED` on macOS). Only processes owned by the exact same User ID (UID) that started the daemon can query the vault.
 - **Privilege Separation**: The intercepting HTTP proxy runs with read-only capabilities with respect to the vault database. It can query the AC state and check placeholder bindings, but it cannot dump the plaintext vault or modify secret values. Mutating commands (like `rotate`, `review`, and manual `add`) are restricted to direct client invocations.
 - **Encryption at Rest**: When running in persistent mode (default), the vault file is encrypted with AES-256-GCM. The key is derived using Argon2id from a master passphrase prompted once at service startup.
@@ -59,11 +82,15 @@ Agentic AI CLIs write and run commands, grep files, and read logs. If you have a
 2. Outbound HTTP requests to AI providers replace raw secrets with placeholders before leaving the machine (**Layer 2**).
 3. Temporary shell snapshots, logs, or history files written to disk are cleaned immediately (**Layer 3**).
 
-Upstream AI models only see placeholders like `@TOKEN_a9553f@`. If the model outputs the placeholder, `ai-noleak` translates it back to the real secret locally before returning it to the CLI. Your credentials never leak.
+Upstream AI models only see placeholders like `@TOKEN_a9553f@`. If the model outputs the placeholder, `ai-noleak` translates it back to the real secret locally before returning it to the CLI.
+
+This prevents accidental leakage of unrelated local secrets into AI requests (the provider's own API key is preserved so that auth succeeds, but all other local secrets are redacted).
 
 ---
 
-## Quick Install (Linux & macOS)
+## Installation
+
+### Quick Install (Linux & macOS)
 
 Install the prebuilt binary matching your OS and architecture with a single shell command:
 
@@ -72,6 +99,25 @@ curl -fsSL https://raw.githubusercontent.com/ahmedxuhri/ai-noleak/main/scripts/i
 ```
 
 *This installs the binaries (`noleak`, `noleakd`, and `noleak-watch`) into `~/.local/bin` (or `/usr/local/bin` if run as root).*
+
+### Build from Source (Alternative)
+
+If you prefer to compile the Go binaries manually:
+
+```sh
+git clone https://github.com/ahmedxuhri/ai-noleak.git
+cd ai-noleak
+make build    # compiles binaries to ./bin/
+make test     # runs the test suite
+```
+
+Requires Go 1.22+.
+
+### Verifying Checksums
+All prebuilt releases contain `SHA256SUMS.txt` matching the published binaries on the GitHub Releases page. You can verify downloaded tarballs using:
+```sh
+sha256sum -c SHA256SUMS.txt
+```
 
 ---
 
@@ -230,22 +276,12 @@ printf "\x1b[200~ghp_A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8\x1b[201~\n" \
 
 - **File Watcher (`noleak-watch`)**: The watcher monitors directory changes using filesystem events (driven by `fsnotify`). On macOS, this uses the FSEvents/kqueue subsystems. While fully functional, macOS file events can occasionally be coalesced or delayed by the operating system under high disk load. 
 - **PTY Wrapper (`noleak run`)**: Designed for bracketed-paste interception. Raw keys typed character-by-character are not caught by the PTY wrapper (Layer 1), but they are fully caught by the outbound proxy (Layer 2) before leaving the machine.
-- **Protocols**: The proxy supports JSON-based request bodies and SSE event streams. Requests utilizing non-standard compressed payloads other than `identity` and `gzip` (like `brotli` or `zstd`) will fail-open with a warning.
+- **Protocols**: The proxy supports JSON-based request bodies and SSE event streams. Requests utilizing unsupported content encodings (e.g. `brotli`, `zstd`, or `deflate`) are failed closed with an HTTP `502 Bad Gateway` to prevent silent redaction bypasses.
+- **Placeholder Semantics**:
+  - **Persistent Mode**: The vault derives a stable master secret once on first-run, encrypts it at rest within the vault file, and loads it on subsequent startups. This ensures deterministic placeholder generation remains stable across restarts.
+  - **Ephemeral Mode** (`--ephemeral`): The master secret is kept strictly in-memory and generated fresh on every boot. Placeholders derived in ephemeral mode are only valid for that run and will change upon daemon restart.
 
 ---
-
-## Build from Source
-
-If you prefer to compile the Go binaries manually:
-
-```sh
-git clone https://github.com/ahmedxuhri/ai-noleak.git
-cd ai-noleak
-make build    # outputs to ./bin/
-make test     # runs the test suite
-```
-
-Requires Go 1.22+.
 
 ---
 

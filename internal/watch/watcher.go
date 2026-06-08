@@ -109,7 +109,9 @@ func (w *Watcher) Run(ctx context.Context) error {
 	w.mu.Unlock()
 
 	if len(rules) == 0 {
-		return errors.New("watch: no rules registered")
+		w.logger("no watch paths active; watcher is idle")
+		<-ctx.Done()
+		return nil
 	}
 
 	fsw, err := fsnotify.NewWatcher()

