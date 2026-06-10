@@ -218,8 +218,9 @@ Operational, not part of the build, but lives in the spec because the build need
 Honest list of things we estimated but didn't validate:
 
 - **Detector latency on 200 KB request bodies** — estimated ≤ 50 ms with Aho-Corasick + selective gitleaks. Needs a real benchmark against actual conversation sizes. If above budget, hot path drops to AC-only and pattern engine moves to a background re-scan.
-- **PreToolUse URL extraction** — robust for curl/wget/python-requests/node-fetch. Less robust for arbitrary tools that pack the destination into config files or env vars. First-version coverage list goes in `~/.noleak/exec-parsers.yaml`; unsupported tools fail-closed (refuse the substitution) by default.
-- **Bracketed-paste support** — universal in modern terminals; will need a fallback typing-detection path if user's terminal disables it.
+- **PreToolUse URL extraction limits** — robust for direct shell commands like curl/wget/python-requests/node-fetch. However, if an agent executes indirect scripts (e.g. writing a script containing placeholders and executing `python3 leak.py`), the command string lacks the destination URL. In such cases, PreToolUse fails closed, leaving placeholders unsubstituted, causing the script to fail.
+- **Asynchronous Watcher Race Conditions** — The file watcher runs asynchronously via `fsnotify`. If an agent writes a secret to a file and reads it back within milliseconds, a brief window exists where the file remains raw on disk. While Layer 2 (HTTP Proxy) protects transmission, the local file is briefly exposed.
+- **Bracketed-paste support** — universal in modern terminals; acts strictly as a paste protector. Character-by-character typed secrets bypass Layer 1 (PTY wrapper) but are caught at the Layer 2 transport proxy.
 - **Upstream API surface stability** — L2 needs to stay transparent against the upstream's response format. If upstream changes shape, L2 breaks until updated. Mitigation: pure-passthrough on streaming, JSON-aware only on bodies it can parse cleanly.
 
 ## 12. What we explicitly did NOT design

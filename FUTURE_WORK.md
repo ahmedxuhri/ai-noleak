@@ -32,6 +32,9 @@ The following items are orthogonal to the core security guarantees but would imp
 ### (4) Brotli and Zstandard compression support
 - The proxy currently supports `identity` and `gzip` content encodings. If future AI agents default to Brotli (`br`) or Zstandard (`zstd`) for streaming, the proxy must be updated with native decoders to inspect outbound traffic.
 
+### (5) Local Resolver Proxy / DNS Redirection
+- To solve the limitation where the PreToolUse hook cannot determine destination hosts for indirect script executions (e.g. running `python3 leak.py` where the bash command itself lacks the target URL), we plan to introduce a local DNS resolver or transparent SOCKS/system-wide loopback proxy. This would allow `ai-noleak` to intercept outbound script connections dynamically and perform placeholder-to-secret substitution at the socket level.
+
 ---
 
 ## Lessons from live-traffic testing
