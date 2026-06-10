@@ -1,6 +1,6 @@
 # ai-noleak
 
-> **Local redaction proxy for preventing AI coding agents from leaking your secrets.**
+> **Local redaction proxy to prevent AI coding agents from leaking your secrets.**
 
 `ai-noleak` sits between your terminal and any AI API. It intercepts accidentally exposed local secrets, credentials, tokens, and API keys — replacing them with deterministic local placeholders (`@TOKEN_xxxxxx@`) across three independent protection layers before they can reach the upstream model.
 
