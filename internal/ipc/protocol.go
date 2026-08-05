@@ -17,7 +17,8 @@ const (
 	OpList     = "list"
 	OpRotate   = "rotate"
 	OpDelete   = "delete"
-	OpHealth   = "health"
+	OpHealth    = "health"
+	OpSetStatus = "set_status"
 )
 
 // Request is the envelope. Op selects which Payload field is meaningful.
@@ -28,8 +29,9 @@ type Request struct {
 	Register *RegisterRequest `json:"register,omitempty"`
 	Bind     *BindRequest     `json:"bind,omitempty"`
 	Unbind   *BindRequest     `json:"unbind,omitempty"`
-	Rotate   *RotateRequest   `json:"rotate,omitempty"`
-	Delete   *DeleteRequest   `json:"delete,omitempty"`
+	Rotate    *RotateRequest    `json:"rotate,omitempty"`
+	Delete    *DeleteRequest    `json:"delete,omitempty"`
+	SetStatus *SetStatusRequest `json:"set_status,omitempty"`
 }
 
 // Response is uniform across ops. Exactly one of Error or one of the
@@ -108,6 +110,13 @@ type RotateRequest struct {
 // DeleteRequest removes an entry from the vault.
 type DeleteRequest struct {
 	Placeholder string `json:"placeholder"`
+}
+
+// SetStatusRequest transitions the lifecycle state of a vault entry.
+// Status must be one of: pending_review, accepted, rejected, rotation_needed, archived.
+type SetStatusRequest struct {
+	Placeholder string `json:"placeholder"`
+	Status      string `json:"status"`
 }
 
 // ListResponse describes the current vault contents (placeholders + metadata).

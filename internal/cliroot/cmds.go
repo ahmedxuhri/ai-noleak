@@ -2,6 +2,7 @@ package cliroot
 
 import (
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"noleak/internal/ipc"
+	"noleak/internal/tui"
 )
 
 func defaultClient() *ipc.Client {
@@ -139,32 +141,37 @@ func newBindCmd() *cobra.Command {
 func newReviewCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "review",
-		Short: "Triage pending-review entries (auto-registered + bootstrap)",
-		Long:  "See SPEC.md §7. Stage 9 work pending; this stub lists pending entries for now.",
+		Short: "Triage pending-review entries interactively (TUI)",
+		Long:  "Opens a split-pane Terminal UI to accept, reject, delete, or bind vault entries. Falls back to plain-text listing if stdout is not a TTY.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := defaultClient().Call(&ipc.Request{Op: ipc.OpList})
-			if err != nil {
-				return err
-			}
-			if resp.Error != "" {
-				return fmt.Errorf("daemon: %s", resp.Error)
-			}
-			any := false
-			for _, e := range resp.List.Entries {
-				if e.Status != "pending_review" {
-					continue
+			err := tui.Run(defaultSocketPath())
+			if errors.Is(err, tui.ErrNotTTY) {
+				// Non-interactive fallback: print pending entries as plain text.
+				resp, err2 := defaultClient().Call(&ipc.Request{Op: ipc.OpList})
+				if err2 != nil {
+					return err2
 				}
-				any = true
-				fmt.Printf("%s  %s  source=%s  bindings=%s\n",
-					e.Placeholder, e.Kind, e.Source, strings.Join(e.Bindings, ","))
+				if resp.Error != "" {
+					return fmt.Errorf("daemon: %s", resp.Error)
+				}
+				any := false
+				for _, e := range resp.List.Entries {
+					if e.Status != "pending_review" {
+						continue
+					}
+					any = true
+					fmt.Printf("%s  %s  source=%s  bindings=%s\n",
+						e.Placeholder, e.Kind, e.Source, strings.Join(e.Bindings, ","))
+				}
+				if !any {
+					fmt.Fprintln(os.Stderr, "(no pending review entries)")
+				}
+				return nil
 			}
-			if !any {
-				fmt.Fprintln(os.Stderr, "(no pending review entries)")
-			}
-			return nil
+			return err
 		},
 	}
-	c.Flags().Bool("bulk", false, "group by source dir + type for fast accept/reject (Stage 9)")
+	c.Flags().Bool("bulk", false, "(reserved) group by source dir + type for fast accept/reject")
 	return c
 }
 

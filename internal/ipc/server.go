@@ -161,6 +161,8 @@ func (s *Server) dispatch(req *Request) *Response {
 		return s.handleDelete(req.Delete)
 	case OpHealth:
 		return s.handleHealth()
+	case OpSetStatus:
+		return s.handleSetStatus(req.SetStatus)
 	default:
 		return &Response{Error: "unknown op: " + req.Op}
 	}
@@ -328,6 +330,23 @@ func (s *Server) handleDelete(req *DeleteRequest) *Response {
 		return &Response{Error: "delete: missing payload"}
 	}
 	if err := s.vault.Delete(req.Placeholder); err != nil {
+		return &Response{Error: err.Error()}
+	}
+	return &Response{OK: true}
+}
+
+func (s *Server) handleSetStatus(req *SetStatusRequest) *Response {
+	if req == nil {
+		return &Response{Error: "set_status: missing payload"}
+	}
+	st := vault.Status(req.Status)
+	switch st {
+	case vault.StatusPendingReview, vault.StatusAccepted,
+		vault.StatusRejected, vault.StatusRotationNeeded, vault.StatusArchived:
+	default:
+		return &Response{Error: "set_status: invalid status: " + req.Status}
+	}
+	if err := s.vault.SetStatus(req.Placeholder, st); err != nil {
 		return &Response{Error: err.Error()}
 	}
 	return &Response{OK: true}

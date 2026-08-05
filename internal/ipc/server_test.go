@@ -119,3 +119,81 @@ func containsBytes(haystack, needle []byte) bool {
 	}
 	return false
 }
+
+func TestServer_SetStatus(t *testing.T) {
+	c, stop := newTestServer(t)
+	defer stop()
+
+	// Register a test entry first.
+	regResp, err := c.Call(&Request{Op: OpRegister, Register: &RegisterRequest{
+		Value: "set-status-test-token-abc123", Kind: "test",
+	}})
+	if err != nil || regResp.Error != "" {
+		t.Fatalf("register: err=%v resp=%+v", err, regResp)
+	}
+	ph := regResp.Register.Placeholder
+
+	// Happy path: transition to accepted.
+	resp, err := c.Call(&Request{
+		Op: OpSetStatus,
+		SetStatus: &SetStatusRequest{Placeholder: ph, Status: "accepted"},
+	})
+	if err != nil {
+		t.Fatalf("set_status call: %v", err)
+	}
+	if resp.Error != "" {
+		t.Fatalf("set_status error: %s", resp.Error)
+	}
+	if !resp.OK {
+		t.Fatal("expected OK=true")
+	}
+
+	// Verify the status changed via list.
+	listResp, _ := c.Call(&Request{Op: OpList})
+	found := false
+	for _, e := range listResp.List.Entries {
+		if e.Placeholder == ph {
+			found = true
+			if e.Status != "accepted" {
+				t.Fatalf("expected status=accepted, got %s", e.Status)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("registered entry not found in list")
+	}
+
+	// Transition to rotation_needed.
+	resp2, _ := c.Call(&Request{
+		Op: OpSetStatus,
+		SetStatus: &SetStatusRequest{Placeholder: ph, Status: "rotation_needed"},
+	})
+	if resp2.Error != "" {
+		t.Fatalf("set_status rotation_needed: %s", resp2.Error)
+	}
+
+	// Invalid status should return an error.
+	resp3, _ := c.Call(&Request{
+		Op: OpSetStatus,
+		SetStatus: &SetStatusRequest{Placeholder: ph, Status: "bogus_status"},
+	})
+	if resp3.Error == "" {
+		t.Fatal("expected error for invalid status, got none")
+	}
+
+	// Non-existent placeholder should return an error.
+	resp4, _ := c.Call(&Request{
+		Op: OpSetStatus,
+		SetStatus: &SetStatusRequest{Placeholder: "@TOKEN_notexist@", Status: "accepted"},
+	})
+	if resp4.Error == "" {
+		t.Fatal("expected error for unknown placeholder, got none")
+	}
+
+	// Nil payload should return an error.
+	resp5, _ := c.Call(&Request{Op: OpSetStatus})
+	if resp5.Error == "" {
+		t.Fatal("expected error for nil set_status payload, got none")
+	}
+}
+
